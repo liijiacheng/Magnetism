@@ -9,7 +9,7 @@ class anisotropicTMM:
         epsilon: array
             complex dielectric constant tensor, dim=(num_layers, 3, 3, len(wavelength)).
         d: list [nm]
-            thickness of each layer, assumed to be surrounded by air.
+            thickness of each non-air layer, assumed to be surrounded by air.
         wavelength: array [nm]
             wavelength of light.
         phi: float [rad]
