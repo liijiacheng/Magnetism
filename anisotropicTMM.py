@@ -71,10 +71,41 @@ class anisotropicTMM:
         #     M = np.einsum('jkl,kml->jml', M_lis[i], M)
         return M
     
-    def reflectance(self):
+    def reflectance(self, white_light=False):
         '''
         Calculate the reflectance.
+        parameters:
+            white_light: bool
+                if True, average the reflection coefficients over the x and y direction.
         Returns:
+            r: array
+                reflection coefficient matrix, dim=(len(wavelength), 2, 2).
+        or white_light=True:
             R: array
                 reflectance, dim=(len(wavelength),).
         '''
+        A=np.array([
+            [0, -self.ratio_0*np.cos(self.phi)],
+            [self.ratio_0/np.cos(self.phi), 0]
+        ])
+        B=np.array([
+            [0, self.ratio_0*np.cos(self.phi)],
+            [-self.ratio_0/np.cos(self.phi), 0]
+        ])
+        M=self.transfer_matrix()
+        r = np.zeros((len(self.wavelength), 2, 2), dtype=complex)
+        for l in range(len(self.wavelength)):
+            M_l = M[:,:,l]
+            M11=M_l[:2,:2]
+            M12=M_l[:2,2:]
+            M21=M_l[2:,:2]
+            M22=M_l[2:,2:]
+            E = A @ M11 + A @ M12 @ A - M21 - M22 @ A
+            F = M21 + M22 @ B - A @ M11 - A @ M12 @ B
+            if np.linalg.det(F) == 0:
+                raise ValueError("Singular matrix encountered in reflectance calculation.")
+            r[l::] = np.linalg.inv(F) @ E
+        if white_light:
+            R = np.sum(np.abs(r)**2, axis=(1, 2))/2
+            return R
+        return r
