@@ -1,5 +1,5 @@
-.vscode/settings.json
-new_0T-2.asc
+.vscode/
 .DS_Store
-__pycache__/exciton_Lorentz_fit.cpython-313.pyc
+__pycache__/
 test.py
+data/
