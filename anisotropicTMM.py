@@ -53,7 +53,7 @@ class anisotropicTMM:
             M: array
                 transfer matrix, dim=(4, 4, len(wavelength)).
         '''
-        kS = self.k0 * self.propagate_matrix()
+        kS = np.linalg.einsum('l,ijkl->ijkl', self.k0, self.propagate_matrix())
         M = np.zeros((4, 4, len(self.wavelength)), dtype=complex)
         for l in range(len(self.wavelength)):
             M[:,:,l] = np.eye(4, dtype=complex)
