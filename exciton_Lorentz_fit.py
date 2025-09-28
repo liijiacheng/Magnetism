@@ -6,7 +6,7 @@ import os
 
 class lorentz_fit:
 	'''
-	Fit exciton parameters in yy component and off-diagonal xy,yx components in anisotropic epsilon tensor with Lorentz model.
+	Fit exciton parameters of a single anisotropic excitonic layer with Lorentz model.
 	parameters:
 		asc_path: str
 			angular resolved spectrum asc file path.
@@ -17,7 +17,7 @@ class lorentz_fit:
 		phi: float [rad]
 			incident angle, assumed to be in x-z plane.
 		eps_list: list [1]
-			list of relative dielectric tensors for non-excitonic layers, dim=(num_layers-1, 3, 3, len(wavelength)).
+			list of relative dielectric constants for non-excitonic layers, dim=(num_layers-1, 3, 3).
 		i: int
 			index of the layer to fit exciton parameters, start with 1.
 	'''
@@ -73,15 +73,18 @@ class lorentz_fit:
 				yx = np.conj(xy)
 				eps[layer] = np.array([[[9]*len(omega), xy,            [0]*len(omega)],
 									  [yx,              yy,            [0]*len(omega)],
-									  [[0]*len(omega), [0]*len(omega), [0]*len(omega)]])
+									  [[0]*len(omega), [0]*len(omega), [5]*len(omega)]])
 			else:
-				eps[layer] = self.eps_list[layer if layer < i-1 else layer - 1]
+				eps_layer = self.eps_list[layer if layer < i-1 else layer - 1]
+				eps[layer] = np.array([[[eps_layer[0,0]]*len(omega), [eps_layer[0,1]]*len(omega), [eps_layer[0,2]]*len(omega)],
+									  [[eps_layer[1,0]]*len(omega), [eps_layer[1,1]]*len(omega), [eps_layer[1,2]]*len(omega)],
+									  [[eps_layer[2,0]]*len(omega), [eps_layer[2,1]]*len(omega), [eps_layer[2,2]]*len(omega)]])
 		return eps
 
 
 	def reflectance_from_params(self, params):
 		epsilon = self.build_epsilon_tensor(params)
-		d=self.d.insert(self.i-1, params[-1])
+		d=np.array(self.d.insert(self.i-1, params[-1]))
 		tmm = anisotropicTMM(epsilon, d, self.wavelength, self.phi)
 		R = tmm.reflectance(white_light=True)
 		return R/np.max(R)
@@ -99,5 +102,6 @@ class lorentz_fit:
 			p0 = [10, 1, 2.1e15, 0.0, 1, 2.2e15, 0.0, 0, 0, 50]
 		res = least_squares(self.residuals, p0)
 		return res
-	
-lorentz_fit('./data/new_0T-2.asc', d=[], wavelength_range=[860,970], phi=0, eps_list=[], i=1).fit_exciton_and_offdiagonals()
+
+eps_siO2 = np.array([[2.25, 0, 0], [0, 2.25, 0], [0, 0, 2.25]])  # SiO2
+lorentz_fit('./data/new_0T-2.asc', d=[280], wavelength_range=[860,970], phi=0, eps_list=[eps_siO2], i=1).fit_exciton_and_offdiagonals()
