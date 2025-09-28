@@ -116,7 +116,8 @@ class lorentz_fit:
 
 	def residuals(self, params):
 		R_model = self.reflectance_from_params(params)
-		return (R_model - self.reflectance_data)[self.wavelength>855] # residuals with mask
+		mask=self.wavelength>900
+		return (R_model - self.reflectance_data)[mask] # residuals with mask
 
 
 	def fit_exciton_and_offdiagonals(self, p0=None):
