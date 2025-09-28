@@ -1,5 +1,6 @@
 import numpy as np
 from scipy import constants
+import scipy.linalg as la
 import matplotlib.pyplot as plt
 
 class anisotropicTMM:
@@ -9,7 +10,7 @@ class anisotropicTMM:
         epsilon: array
             complex dielectric constant tensor, dim=(num_layers, 3, 3, len(wavelength)).
         d: array [nm]
-            thickness of each non-air layer, assumed to be surrounded by air.
+            thickness of each layer, assumed to be surrounded by air and Silicon substrate.
         wavelength: array [nm]
             wavelength of light.
         phi: float [rad]
@@ -53,25 +54,19 @@ class anisotropicTMM:
             M: array
                 transfer matrix, dim=(4, 4, len(wavelength)).
         '''
-        kS = np.linalg.einsum('l,ijkl->ijkl', self.k0, self.propagate_matrix())
+        kS = np.einsum('l,ijkl->ijkl', self.k0, self.propagate_matrix())
         M = np.zeros((4, 4, len(self.wavelength)), dtype=complex)
         for l in range(len(self.wavelength)):
             M[:,:,l] = np.eye(4, dtype=complex)
             for i in range(self.num_layers):
                 d = self.d[i]
                 kS_il = kS[i,:,:,l]
-                eigvals, eigvecs = np.linalg.eig(kS_il)
-                M_il = np.diag(np.exp(1j * eigvals * d))
-                M_il = eigvecs @ M_il @ np.linalg.inv(eigvecs)
+                # compute matrix exponential of (1j * kS_il * d)
+                M_il = la.expm(1j * kS_il * d)
                 M[:,:,l] = M_il @ M[:,:,l]
-        # kSd=np.einsum('ijkl,i->ijkl', kS_i, d)
-        # M_lis=np.exp(1j * kSd)
-        # M = M_lis[0]
-        # for i in range(1,self.num_layers):
-        #     M = np.einsum('jkl,kml->jml', M_lis[i], M)
         return M
     
-    def reflectance(self, white_light=False):
+    def reflectance(self, white_light=False, linear_polarized=False):
         '''
         Calculate the reflectance.
         parameters:
@@ -83,6 +78,9 @@ class anisotropicTMM:
         or white_light=True:
             R: array
                 reflectance, dim=(len(wavelength),).
+        or linear_polarized=True:
+            R: array
+                reflectance for linear polarized light along y axis, dim=(len(wavelength),).
         '''
         A=np.array([
             [0, -self.ratio_0*np.cos(self.phi)],
@@ -92,7 +90,13 @@ class anisotropicTMM:
             [0, self.ratio_0*np.cos(self.phi)],
             [-self.ratio_0/np.cos(self.phi), 0]
         ])
-        M=self.transfer_matrix()
+        cos_phi_s=np.sqrt(1-self.alpha**2/3.6**2)
+        ratio_s = self.ratio_0 * 3.6
+        C=np.array([
+            [0, -ratio_s*cos_phi_s],
+            [ratio_s/cos_phi_s, 0]
+        ])
+        M = self.transfer_matrix()
         r = np.zeros((len(self.wavelength), 2, 2), dtype=complex)
         for l in range(len(self.wavelength)):
             M_l = M[:,:,l]
@@ -100,12 +104,26 @@ class anisotropicTMM:
             M12=M_l[:2,2:]
             M21=M_l[2:,:2]
             M22=M_l[2:,2:]
-            E = A @ M11 + A @ M12 @ A - M21 - M22 @ A
-            F = M21 + M22 @ B - A @ M11 - A @ M12 @ B
-            if np.linalg.det(F) == 0:
-                raise ValueError("Singular matrix encountered in reflectance calculation.")
-            r[l::] = np.linalg.inv(F) @ E
+            E = C @ M11 + C @ M12 @ A - M21 - M22 @ A
+            F = M21 + M22 @ B - C @ M11 - C @ M12 @ B
+
+            # try stable solve first; fallback to pseudo-inverse on failure
+            try:
+                res = np.linalg.solve(F, E)
+                if not np.isfinite(res).all():
+                    raise np.linalg.LinAlgError("Non-finite result from solve")
+            except np.linalg.LinAlgError:
+                import warnings
+                warnings.warn(
+                    "Singular or ill-conditioned matrix encountered in reflectance calculation; using pseudo-inverse.",
+                    RuntimeWarning
+                )
+                res = np.linalg.pinv(F) @ E
+            r[l] = res
         if white_light:
             R = np.sum(np.abs(r)**2, axis=(1, 2))/2
+            return R
+        if linear_polarized:
+            R = np.abs(r[:,0,1])**2 + np.abs(r[:,1,1])**2
             return R
         return r
