@@ -44,7 +44,7 @@ class anisotropicTMM:
                 [-b*eps[2,0]/eps[2,2], -b*eps[2,1]/eps[2,2], -(1-b**2/eps[2,2])/self.ratio_0, -a*b/eps[2,2]/self.ratio_0],
                 [(-a*b-eps[1,0]+eps[2,0]*eps[1,2]/eps[2,2])*self.ratio_0, (a**2-eps[1,1]+eps[2,1]*eps[1,2]/eps[2,2])*self.ratio_0, -b*eps[1,2]/eps[2,2], a*eps[1,2]/eps[2,2]],
                 [(-b**2+eps[0,0]-eps[2,0]*eps[0,2]/eps[2,2])*self.ratio_0, (a*b+eps[0,1]-eps[2,1]*eps[0,2]/eps[2,2])*self.ratio_0, b*eps[0,2]/eps[2,2], -a*eps[0,2]/eps[2,2]]
-            ]).reshape(4,4,len(self.wavelength))
+            ])
         return S
     
     def transfer_matrix(self):

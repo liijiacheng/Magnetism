@@ -66,7 +66,7 @@ class lorentz_fit:
 		d_ref = self.d.copy()
 		d_ref = np.array(d_ref)
 		tmm = anisotropicTMM(eps, d_ref, self.wavelength, self.phi)
-		R_ref = tmm.reflectance(linear_polarized=True)
+		R_ref = tmm.reflectance(white_light=True)
 		return R_ref
 	
 	def lorentz_eps(self, parameters):
@@ -110,7 +110,7 @@ class lorentz_fit:
 		d.insert(self.i-1, params[-1])
 		d = np.array(d)
 		tmm = anisotropicTMM(epsilon, d, self.wavelength, self.phi)
-		R = tmm.reflectance(linear_polarized=True)
+		R = tmm.reflectance(white_light=True)
 		return R/self.reference_reflectance
 
 
