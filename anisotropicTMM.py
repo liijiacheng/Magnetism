@@ -16,7 +16,7 @@ class anisotropicTMM:
         phi: float [rad]
             incident angle, assumed to be in x-z plane.
     '''
-    def __init__(self, epsilon, d, wavelength, phi):
+    def __init__(self, epsilon, d, wavelength, phi, substrate_refractive_index=3.58):
         self.epsilon = epsilon
         self.d = d * 1e-9 # nm to m
         self.wavelength = wavelength * 1e-9 # nm to m
@@ -26,6 +26,7 @@ class anisotropicTMM:
         self.alpha = np.sin(phi)
         self.beta = 0 # incident plane is x-z plane
         self.k0 = 2 * np.pi / self.wavelength # wavevector in vacuum
+        self.substrate_refractive_index = substrate_refractive_index
 
     def propagate_matrix(self):
         '''
@@ -43,7 +44,7 @@ class anisotropicTMM:
                 [-a*eps[2,0]/eps[2,2], -a*eps[2,1]/eps[2,2], a*b/eps[2,2]/self.ratio_0, (1-a**2/eps[2,2])/self.ratio_0],
                 [-b*eps[2,0]/eps[2,2], -b*eps[2,1]/eps[2,2], -(1-b**2/eps[2,2])/self.ratio_0, -a*b/eps[2,2]/self.ratio_0],
                 [(-a*b-eps[1,0]+eps[2,0]*eps[1,2]/eps[2,2])*self.ratio_0, (a**2-eps[1,1]+eps[2,1]*eps[1,2]/eps[2,2])*self.ratio_0, -b*eps[1,2]/eps[2,2], a*eps[1,2]/eps[2,2]],
-                [(-b**2+eps[0,0]-eps[2,0]*eps[0,2]/eps[2,2])*self.ratio_0, (a*b+eps[0,1]-eps[2,1]*eps[0,2]/eps[2,2])*self.ratio_0, b*eps[0,2]/eps[2,2], -a*eps[0,2]/eps[2,2]]
+                [(-b**2+eps[0,0]-eps[2,0]*eps[0,2]/eps[2,2])*self.ratio_0, (a*b+eps[0,1]-eps[0,2]*eps[2,1]/eps[2,2])*self.ratio_0, b*eps[0,2]/eps[2,2], -a*eps[0,2]/eps[2,2]]
             ])
         return S
     
@@ -66,7 +67,7 @@ class anisotropicTMM:
                 M[:,:,l] = M_il @ M[:,:,l]
         return M
     
-    def reflectance(self, white_light=False, linear_polarized=False):
+    def reflectance(self, white_light=False, y_polarized=False, x_polarized=False):
         '''
         Calculate the reflectance.
         parameters:
@@ -78,9 +79,12 @@ class anisotropicTMM:
         or white_light=True:
             R: array
                 reflectance, dim=(len(wavelength),).
-        or linear_polarized=True:
+        or y_polarized=True:
             R: array
                 reflectance for linear polarized light along y axis, dim=(len(wavelength),).
+        or x_polarized=True:
+            R: array
+                reflectance for linear polarized light along x axis, dim=(len(wavelength),).
         '''
         A=np.array([
             [0, -self.ratio_0*np.cos(self.phi)],
@@ -90,8 +94,8 @@ class anisotropicTMM:
             [0, self.ratio_0*np.cos(self.phi)],
             [-self.ratio_0/np.cos(self.phi), 0]
         ])
-        cos_phi_s=np.sqrt(1-self.alpha**2/3.6**2)
-        ratio_s = self.ratio_0 * 3.6
+        cos_phi_s=np.sqrt(1-self.alpha**2/self.substrate_refractive_index**2)
+        ratio_s = self.ratio_0 * self.substrate_refractive_index
         C=np.array([
             [0, -ratio_s*cos_phi_s],
             [ratio_s/cos_phi_s, 0]
@@ -119,11 +123,14 @@ class anisotropicTMM:
                     RuntimeWarning
                 )
                 res = np.linalg.pinv(F) @ E
-            r[l] = res
+            r[l,:,:] = res
         if white_light:
             R = np.sum(np.abs(r)**2, axis=(1, 2))/2
             return R
-        if linear_polarized:
+        if y_polarized:
             R = np.abs(r[:,0,1])**2 + np.abs(r[:,1,1])**2
+            return R
+        if x_polarized:
+            R = np.abs(r[:,0,0])**2 + np.abs(r[:,1,0])**2
             return R
         return r
