@@ -2,6 +2,7 @@ import numpy as np
 from scipy import constants
 import scipy.linalg as la
 import matplotlib.pyplot as plt
+from epsilon_data import epsilon as eps_data
 
 class anisotropicTMM:
     '''
@@ -16,7 +17,7 @@ class anisotropicTMM:
         phi: float [rad]
             incident angle, assumed to be in x-z plane.
     '''
-    def __init__(self, epsilon, d, wavelength, phi, substrate_refractive_index=3.58):
+    def __init__(self, epsilon, d, wavelength, phi, substrate='Si'):
         self.epsilon = epsilon
         self.d = d * 1e-9 # nm to m
         self.wavelength = wavelength * 1e-9 # nm to m
@@ -27,7 +28,9 @@ class anisotropicTMM:
         self.beta = 0 # incident plane is x-z plane
         self.k0 = 2 * np.pi / self.wavelength # wavevector in vacuum
         self.wlnm = len(wavelength)
-        self.substrate_refractive_index = substrate_refractive_index
+        self.eps_data = eps_data(wavelength=self.wavelength*1e9)
+        self.air_refractive_index = self.eps_data.get_epsilon('Air', tensor=False)
+        self.substrate_refractive_index = self.eps_data.get_epsilon(substrate, tensor=False)
 
     def propagate_matrix(self):
         '''
@@ -68,12 +71,14 @@ class anisotropicTMM:
             M = M_i @ M
         return M
     
-    def reflectance(self, polarization=None):
+    def reflectance(self, polarization=None, M_precomputed=None):
         '''
         Calculate the reflectance.
         parameters:
             polarization: str
                 'white_light', 'y', or 'x' to specify the polarization direction.
+            M_precomputed: array
+                precomputed transfer matrix, dim=(len(wavelength), 4, 4). If provided, skip transfer_matrix() calculation.
         Returns:
             r: array
                 reflection coefficient matrix, dim=(len(wavelength), 2, 2).
@@ -87,21 +92,24 @@ class anisotropicTMM:
             R: array
                 reflectance for linear polarized light along x axis, dim=(len(wavelength),).
         '''
-        A=np.array([
-            [0, -self.ratio_0*np.cos(self.phi)],
-            [self.ratio_0/np.cos(self.phi), 0]
-        ])
-        B=np.array([
-            [0, self.ratio_0*np.cos(self.phi)],
-            [-self.ratio_0/np.cos(self.phi), 0]
-        ])
-        cos_phi_s=np.sqrt(1-self.alpha**2/self.substrate_refractive_index**2)
-        ratio_s = self.ratio_0 * self.substrate_refractive_index
-        C=np.array([
-            [0, -ratio_s*cos_phi_s],
-            [ratio_s/cos_phi_s, 0]
-        ])
-        M = self.transfer_matrix() # (L,4,4)
+        L = self.wlnm
+
+        ratio_air = self.air_refractive_index * self.ratio_0  # (L,)
+        cos_phi_air = np.cos(self.phi)  # scalar
+        A = np.zeros((L, 2, 2), dtype=complex)
+        A[:, 0, 1] = -ratio_air * cos_phi_air
+        A[:, 1, 0] =  ratio_air / cos_phi_air
+        B = np.zeros((L, 2, 2), dtype=complex)
+        B[:, 0, 1] =  ratio_air * cos_phi_air
+        B[:, 1, 0] = -ratio_air / cos_phi_air
+
+        ratio_sub = self.substrate_refractive_index * self.ratio_0  # (L,)
+        cos_phi_sub = np.sqrt(1 - (self.air_refractive_index**2) * (self.alpha**2) / (self.substrate_refractive_index**2) + 0j)
+        C = np.zeros((L, 2, 2), dtype=complex)
+        C[:, 0, 1] = -ratio_sub * cos_phi_sub
+        C[:, 1, 0] =  ratio_sub / cos_phi_sub
+
+        M = M_precomputed if M_precomputed is not None else self.transfer_matrix() # (L,4,4)
         M11 = M[:, :2, :2]
         M12 = M[:, :2, 2:]
         M21 = M[:, 2:, :2]

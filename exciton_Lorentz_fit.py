@@ -1,5 +1,6 @@
 import numpy as np
 from anisotropicTMM import anisotropicTMM
+from epsilon_data import epsilon
 from scipy.optimize import least_squares
 from scipy import constants
 import matplotlib.pyplot as plt
@@ -20,20 +21,20 @@ class lorentz_fit:
 		phi: float [rad]
 			incident angle, assumed to be in x-z plane.
 		d: list [nm]
-			thickness of each non-excitonic layer, assumed to be surrounded by air and Silicon substrate.
-		eps_list: list [1]
-			list of relative dielectric tensors for non-excitonic layers, dim=(num_layers-1, 3, 3).
+			thickness of non-excitonic layers, assumed to be surrounded by air and Silicon substrate.
+		layer_names: list str
+			names of non-excitonic layers, assumed to be surrounded by air and Silicon substrate.
 		i: int
 			index of the excitonic layer, start with 1.
 		mask_value: list [nm]
 			wavelength range during fitting.
 	'''
-	def __init__(self, file_path, wavelength_range, fit_names, parameters, phi=0, d=[], eps_list=[], i=1, mask_value=None, polarization='y'):
+	def __init__(self, file_path, wavelength_range, fit_names, parameters, phi=0, d=[], layer_names=[], i=1, mask_value=None, polarization='y'):
 		self.fit_names=fit_names
 		self.parameters=parameters
 		self.phi=phi
 		self.d=d
-		self.eps_list=eps_list
+		self.layer_names=layer_names
 		self.i=i
 		self.mask_value=mask_value
 		self.polarization=polarization
@@ -60,31 +61,34 @@ class lorentz_fit:
 		self.wavelength=wavelength
 		self.hbar_omega=constants.h*3e8/self.wavelength/1e-9/constants.e # [eV]
 
+		# dielectric data cache
+		self.eps_data = epsilon(wavelength=self.wavelength)
+		self.eps_cache = {name: self.eps_data.get_epsilon(name, tensor=True) for name in self.layer_names}
+
 		# obtain reference reflectance
 		self.reference_reflectance=self.reference()
 
+		# precompute left/right transfer matrices for fixed layers (do once)
+		self._precompute()
+
 	def reference(self):
-		"""
+		'''
 		Calculate reference reflectance without excitonic layer.
-		"""
-		n = self.num_layers-1
-		wlnm = self.wlnm
-		eps = np.zeros((n, 3, 3, wlnm), dtype=complex)
-		for layer in range(n):
-			eps_layer = self.eps_list[layer]
-			eps[layer] = np.array([[[eps_layer[0,0]]*wlnm, [eps_layer[0,1]]*wlnm, [eps_layer[0,2]]*wlnm],
-								  [[eps_layer[1,0]]*wlnm, [eps_layer[1,1]]*wlnm, [eps_layer[1,2]]*wlnm],
-								  [[eps_layer[2,0]]*wlnm, [eps_layer[2,1]]*wlnm, [eps_layer[2,2]]*wlnm]])
+		'''
+		eps_ref = []
+		for name in self.layer_names:
+			eps_ref.append(self.eps_cache[name])
+		eps_ref = np.array(eps_ref)
 		d_ref = self.d.copy()
 		d_ref = np.array(d_ref)
-		tmm = anisotropicTMM(eps, d_ref, self.wavelength, self.phi)
+		tmm = anisotropicTMM(eps_ref, d_ref, self.wavelength, self.phi)
 		R_ref = tmm.reflectance(polarization=self.polarization)
 		return R_ref
 	
 	def lorentz_eps(self, parameters):
-		"""
+		'''
 		Lorentz model for dielectric function.
-		"""
+		'''
 		eps_bg = parameters['eps_bg']
 		f1 = parameters['f1']
 		exciton1 = parameters['exciton1']
@@ -95,41 +99,51 @@ class lorentz_fit:
 		hbar_omega= self.hbar_omega
 		return eps_bg + f1 / (exciton1**2 - hbar_omega**2 - 1j * gamma1 * hbar_omega) + f2 / (exciton2**2 - hbar_omega**2 - 1j * gamma2 * hbar_omega)
 
-	def build_epsilon_tensor(self, parameters):
-		"""
-		anisotropic epsilon tensor with i-th layer having Lorentz-model-type yy component and off-diagonal components xy, yx.
-		"""
-		num_layers = self.num_layers
-		i = self.i
-		wlnm = self.wlnm
-		eps = np.zeros((num_layers, 3, 3, wlnm), dtype=complex)
-		for layer in range(num_layers):
-			if layer == i-1:
-				# Lorentz model in yy component
-				yy = self.lorentz_eps(parameters)
-				xy = np.array([parameters["xy_re"] + 1j*parameters["xy_im"]]*wlnm)
-				yx = np.conj(xy)
-				eps[layer] = np.array([[[9]*wlnm, xy,      [0]*wlnm],
-									  [yx,        yy,      [0]*wlnm],
-									  [[0]*wlnm, [0]*wlnm, [5]*wlnm]])
-			else:
-				eps_layer = self.eps_list[layer if layer < i-1 else layer - 1]
-				eps[layer] = np.array([[[eps_layer[0,0]]*wlnm, [eps_layer[0,1]]*wlnm, [eps_layer[0,2]]*wlnm],
-									  [[eps_layer[1,0]]*wlnm, [eps_layer[1,1]]*wlnm, [eps_layer[1,2]]*wlnm],
-									  [[eps_layer[2,0]]*wlnm, [eps_layer[2,1]]*wlnm, [eps_layer[2,2]]*wlnm]])
-		return eps
+	def _precompute(self):
+		'''
+		Precompute M_left and M_right (L,4,4) for fixed layers outside the excitonic layer.
+		'''
+		L = self.wlnm
+
+		left_names = self.layer_names[: self.i-1]
+		left_d = self.d[: self.i-1]
+		left_eps = np.array([self.eps_cache[nm] for nm in left_names])
+
+		right_names = self.layer_names[self.i-1:]
+		right_d = self.d[self.i-1:]
+		right_eps = np.array([self.eps_cache[nm] for nm in right_names])
+
+		self.M_left = np.broadcast_to(np.eye(4, dtype=complex), (L, 4, 4)).copy()
+		self.M_right = np.broadcast_to(np.eye(4, dtype=complex), (L, 4, 4)).copy()
+		# compute left product
+		if left_names:
+			left_d_arr = np.array(left_d)
+			tmm_left = anisotropicTMM(left_eps, left_d_arr, self.wavelength, self.phi)
+			self.M_left = tmm_left.transfer_matrix()  # (L,4,4)
+		# compute right product
+		if right_names:
+			right_d_arr = np.array(right_d)
+			tmm_right = anisotropicTMM(right_eps, right_d_arr, self.wavelength, self.phi)
+			self.M_right = tmm_right.transfer_matrix()  # (L,4,4)
 
 
 	def reflectance_from_params(self, parameters):
 		'''
 		Calculate reflectance from given parameters.
 		'''
-		epsilon = self.build_epsilon_tensor(parameters)
-		d = self.d.copy()
-		d.insert(self.i-1, parameters["thickness_nm"])
-		d = np.array(d)
-		tmm = anisotropicTMM(epsilon, d, self.wavelength, self.phi)
-		R = tmm.reflectance(polarization=self.polarization)
+		# excitonic layer epsilon tensor
+		wlnm = self.wlnm
+		eps_i = np.zeros((1, 3, 3, wlnm), dtype=complex)
+		yy = self.lorentz_eps(parameters)
+		xy = np.array([parameters["xy_re"] + 1j*parameters["xy_im"]]*wlnm)
+		yx = np.conj(xy)
+		eps_i[0] = np.array([[[9]*wlnm, xy,      [0]*wlnm],
+							 [yx,        yy,      [0]*wlnm],
+							 [[0]*wlnm, [0]*wlnm, [5]*wlnm]])
+		tmm_exi = anisotropicTMM(eps_i, np.array([parameters["thickness_nm"]]), self.wavelength, self.phi)
+		M_i = tmm_exi.transfer_matrix()  # (L,4,4)
+		M_total = self.M_right @ M_i @ self.M_left
+		R = tmm_exi.reflectance(polarization=self.polarization, M_precomputed=M_total)
 		return R
 
 	def residuals(self, params, use_log=True):
@@ -185,7 +199,7 @@ class lorentz_fit:
 			p0,
 			bounds=(lower, upper),
 			method='trf',
-			loss='linear',
+			loss='soft_l1',
 			f_scale=f_scale,
 			x_scale=x_scale,
 			max_nfev=10000,
@@ -225,16 +239,16 @@ class lorentz_fit:
 		return res
 
 
+# CrSBr-SiO2 fitting
 time_start=time.time()
-eps_siO2 = np.array([[1.45**2, 0, 0], [0, 1.45**2, 0], [0, 0, 1.45**2]])  # SiO2
 fit=lorentz_fit(
 	file_path='./data/new_0T-2.asc',
 	wavelength_range=[870,950],
-	fit_names=['eps_bg','f1','exciton1','gamma1','f2','exciton2','gamma2','xy_re', 'xy_im', 'thickness_nm'],
+	fit_names=['eps_bg', 'f1', 'exciton1', 'gamma1', 'f2', 'exciton2', 'gamma2', 'xy_re', 'xy_im', 'thickness_nm'],
 	parameters={'eps_bg': 11, 'f1': 1.32, 'exciton1': 1.3670, 'gamma1': 1.52e-3, 'f2': 0.25, 'exciton2': 1.3814, 'gamma2': 6.5e-3, 'xy_re': 0, 'xy_im': 0, 'thickness_nm': 38},
 	phi=0,
 	d=[280],
-	eps_list=[eps_siO2],
+	layer_names=['SiO2'],
 	i=1,
 	mask_value=[890, 951],
 	polarization='y'
