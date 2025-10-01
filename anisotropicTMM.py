@@ -26,6 +26,7 @@ class anisotropicTMM:
         self.alpha = np.sin(phi)
         self.beta = 0 # incident plane is x-z plane
         self.k0 = 2 * np.pi / self.wavelength # wavevector in vacuum
+        self.wlnm = len(wavelength)
         self.substrate_refractive_index = substrate_refractive_index
 
     def propagate_matrix(self):
@@ -35,7 +36,7 @@ class anisotropicTMM:
             S: array
                 propagate matrix, dim=(num_layers, 4, 4, len(wavelength)).
         '''
-        S = np.zeros((self.num_layers, 4, 4, len(self.wavelength)), dtype=complex)
+        S = np.zeros((self.num_layers, 4, 4, self.wlnm), dtype=complex)
         for i in range(self.num_layers):
             eps = self.epsilon[i]
             a = self.alpha
@@ -56,33 +57,33 @@ class anisotropicTMM:
                 transfer matrix, dim=(4, 4, len(wavelength)).
         '''
         kS = np.einsum('l,ijkl->ijkl', self.k0, self.propagate_matrix())
-        M = np.zeros((4, 4, len(self.wavelength)), dtype=complex)
-        for l in range(len(self.wavelength)):
-            M[:,:,l] = np.eye(4, dtype=complex)
-            for i in range(self.num_layers):
-                d = self.d[i]
-                kS_il = kS[i,:,:,l]
-                # compute matrix exponential of (1j * kS_il * d)
-                M_il = la.expm(1j * kS_il * d)
-                M[:,:,l] = M_il @ M[:,:,l]
+        kS = np.transpose(kS, (0, 3, 1, 2))  # (num_layers, len(wavelength), 4, 4)
+        M = np.broadcast_to(np.eye(4, dtype=complex), (self.wlnm, 4, 4)).copy()
+        for i in range(self.num_layers):
+            d = self.d[i]
+            kS_i = kS[i,:,:,:]  # (L,4,4)
+            # in case scipy.linalg.expm does not support batched input, use the following line instead
+            # M_i = np.stack([la.expm(1j * kS_i[l] * d) for l in range(self.wlnm)], axis=0)  # (L,4,4)
+            M_i = la.expm(1j * kS_i * d)  # (L,4,4)
+            M = M_i @ M
         return M
     
-    def reflectance(self, white_light=False, y_polarized=False, x_polarized=False):
+    def reflectance(self, polarization=None):
         '''
         Calculate the reflectance.
         parameters:
-            white_light: bool
-                if True, average the reflection coefficients over the x and y direction.
+            polarization: str
+                'white_light', 'y', or 'x' to specify the polarization direction.
         Returns:
             r: array
                 reflection coefficient matrix, dim=(len(wavelength), 2, 2).
-        or white_light=True:
+        elif polarization='white_light':
             R: array
-                reflectance, dim=(len(wavelength),).
-        or y_polarized=True:
+                reflectance for white light, dim=(len(wavelength),).
+        elif polarization='y':
             R: array
                 reflectance for linear polarized light along y axis, dim=(len(wavelength),).
-        or x_polarized=True:
+        elif polarization='x':
             R: array
                 reflectance for linear polarized light along x axis, dim=(len(wavelength),).
         '''
@@ -100,37 +101,35 @@ class anisotropicTMM:
             [0, -ratio_s*cos_phi_s],
             [ratio_s/cos_phi_s, 0]
         ])
-        M = self.transfer_matrix()
-        r = np.zeros((len(self.wavelength), 2, 2), dtype=complex)
-        for l in range(len(self.wavelength)):
-            M_l = M[:,:,l]
-            M11=M_l[:2,:2]
-            M12=M_l[:2,2:]
-            M21=M_l[2:,:2]
-            M22=M_l[2:,2:]
-            E = C @ M11 + C @ M12 @ A - M21 - M22 @ A
-            F = M21 + M22 @ B - C @ M11 - C @ M12 @ B
+        M = self.transfer_matrix() # (L,4,4)
+        M11 = M[:, :2, :2]
+        M12 = M[:, :2, 2:]
+        M21 = M[:, 2:, :2]
+        M22 = M[:, 2:, 2:]
 
-            # try stable solve first; fallback to pseudo-inverse on failure
-            try:
-                res = np.linalg.solve(F, E)
-                if not np.isfinite(res).all():
-                    raise np.linalg.LinAlgError("Non-finite result from solve")
-            except np.linalg.LinAlgError:
-                import warnings
-                warnings.warn(
-                    "Singular or ill-conditioned matrix encountered in reflectance calculation; using pseudo-inverse.",
-                    RuntimeWarning
-                )
-                res = np.linalg.pinv(F) @ E
-            r[l,:,:] = res
-        if white_light:
+        E = C @ M11 + (C @ M12) @ A - M21 - M22 @ A
+        F = M21 + M22 @ B - C @ M11 - (C @ M12) @ B
+
+        try:
+            res = np.linalg.solve(F, E)  # (L,2,2)
+            if not np.isfinite(res).all():
+                raise np.linalg.LinAlgError("Non-finite result from batched solve")
+        except Exception:
+            import warnings
+            warnings.warn(
+                "Singular or ill-conditioned system in reflectance; using batched pseudo-inverse.",
+                RuntimeWarning
+            )
+            res = np.linalg.pinv(F) @ E  # (L,2,2)
+
+        r = res  # (L,2,2)
+        if polarization=='white_light':
             R = np.sum(np.abs(r)**2, axis=(1, 2))/2
             return R
-        if y_polarized:
+        elif polarization=='y':
             R = np.abs(r[:,0,1])**2 + np.abs(r[:,1,1])**2
             return R
-        if x_polarized:
+        elif polarization=='x':
             R = np.abs(r[:,0,0])**2 + np.abs(r[:,1,0])**2
             return R
         return r
