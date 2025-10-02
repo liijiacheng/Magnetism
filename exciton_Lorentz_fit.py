@@ -84,20 +84,6 @@ class lorentz_fit:
 		tmm = anisotropicTMM(eps_ref, d_ref, self.wavelength, self.phi)
 		R_ref = tmm.reflectance(polarization=self.polarization)
 		return R_ref
-	
-	def lorentz_eps(self, parameters):
-		'''
-		Lorentz model for dielectric function.
-		'''
-		eps_bg = parameters['eps_bg']
-		f1 = parameters['f1']
-		exciton1 = parameters['exciton1']
-		gamma1 = parameters['gamma1']
-		f2 = parameters['f2']
-		exciton2 = parameters['exciton2']
-		gamma2 = parameters['gamma2']
-		hbar_omega= self.hbar_omega
-		return eps_bg + f1 / (exciton1**2 - hbar_omega**2 - 1j * gamma1 * hbar_omega) + f2 / (exciton2**2 - hbar_omega**2 - 1j * gamma2 * hbar_omega)
 
 	def _precompute(self):
 		'''
@@ -126,6 +112,19 @@ class lorentz_fit:
 			tmm_right = anisotropicTMM(right_eps, right_d_arr, self.wavelength, self.phi)
 			self.M_right = tmm_right.transfer_matrix()  # (L,4,4)
 
+	def lorentz_eps(self, parameters):
+		'''
+		Lorentz model for dielectric function.
+		'''
+		eps_bg = parameters['eps_bg']
+		f1 = parameters['f1']
+		exciton1 = parameters['exciton1']
+		gamma1 = parameters['gamma1']
+		f2 = parameters['f2']
+		exciton2 = parameters['exciton2']
+		gamma2 = parameters['gamma2']
+		hbar_omega= self.hbar_omega
+		return eps_bg + f1 / (exciton1**2 - hbar_omega**2 - 1j * gamma1 * hbar_omega) + f2 / (exciton2**2 - hbar_omega**2 - 1j * gamma2 * hbar_omega)
 
 	def reflectance_from_params(self, parameters):
 		'''
@@ -202,7 +201,7 @@ class lorentz_fit:
 			loss='soft_l1',
 			f_scale=f_scale,
 			x_scale=x_scale,
-			max_nfev=10000,
+			max_nfev=1000,
 			ftol=1e-12,
 			xtol=1e-12,
 			gtol=1e-12,
